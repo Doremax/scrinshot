@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<title>Скан рецепта</title>
+<style>
+  body { font-family: sans-serif; padding: 12px; }
+  label { display: block; font-size: 12px; color: #666; margin-top: 8px; }
+  input:not([type=file]) { width: 100%; padding: 8px; box-sizing: border-box; }
+  button { width: 100%; padding: 12px; margin-top: 10px; font-size: 16px; }
+  #cam { display: none; position: fixed; inset: 0; background: #000; z-index: 10; overflow: hidden; }
+  #v { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #frame { position: absolute; left: 4vw; width: 92vw; aspect-ratio: 1870 / 888;
+           top: 50%; transform: translateY(-50%); border: 3px solid #2ecc71;
+           box-sizing: border-box; box-shadow: 0 0 0 100vmax rgba(0,0,0,.6); }
+  #hint { position: absolute; top: 12px; left: 0; right: 0; text-align: center;
+          color: #fff; font-size: 14px; padding: 0 16px; }
+  #camBtns { position: absolute; bottom: 20px; left: 16px; right: 16px; display: flex; gap: 10px; }
+  #camBtns button { margin: 0; }
+</style>
+</head>
+<body>
+
+<button id="camBtn">📷 Сделать фото рецепта</button>
+<button id="galBtn" style="background:#eee">🖼 Выбрать из галереи</button>
+<input type="file" id="f" accept="image/*" style="display:none">
+
+<div id="form"></div>
+<button id="saveBtn" style="display:none">Сохранить</button>
+
+<div id="cam">
+  <video id="v" autoplay playsinline muted></video>
+  <div id="frame"></div>
+  <div id="hint">Вместите весь экран с рецептом в зелёную рамку.<br>Держите телефон ровно, лучше горизонтально.</div>
+  <div id="camBtns">
+    <button id="closeBtn">Отмена</button>
+    <button id="shotBtn" style="background:#2ecc71;color:#fff;font-weight:bold">Снять</button>
+  </div>
+</div>
+
+<script>
+const URL_GAS = 'https://script.google.com/macros/s/XXXX/exec';
+const RW = 1870, RH = 888, MAX_W = 2200;
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+let current = null, stream = null;
+
+const post = o => fetch(URL_GAS, { method: 'POST', body: JSON.stringify(o) }).then(r => r.json());
+
+// ---------- Камера с рамкой ----------
+camBtn.onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } },
+      audio: false
+    });
+    v.srcObject = stream;
+    cam.style.display = 'block';
+  } catch (e) {
+    alert('Камера недоступна: ' + e.name + '. Разрешите доступ к камере или выберите фото из галереи.');
+  }
+};
+function closeCam() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; cam.style.display = 'none';
+}
+closeBtn.onclick = closeCam;
+
+shotBtn.onclick = () => {
+  const vW = v.videoWidth, vH = v.videoHeight;
+  const vb = v.getBoundingClientRect(), fr = frame.getBoundingClientRect();
+  const scale = Math.max(vb.width / vW, vb.height / vH);       // object-fit: cover
+  const ox = (vW * scale - vb.width) / 2, oy = (vH * scale - vb.height) / 2;
+  const sx = (fr.left - vb.left + ox) / scale, sy = (fr.top - vb.top + oy) / scale;
+  const sw = fr.width / scale, sh = fr.height / scale;
+  const ow = Math.min(Math.round(sw), MAX_W), oh = Math.round(ow * RH / RW);
+  const c = document.createElement('canvas'); c.width = ow; c.height = oh;
+  c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, ow, oh);
+  closeCam();
+  runScan(c.toDataURL('image/jpeg', 0.9).split(',')[1]);
+};
+
+// ---------- Галерея ----------
+galBtn.onclick = () => f.click();
+f.onchange = () => {
+  const file = f.files[0]; if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    const k = Math.min(1, MAX_W / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    f.value = '';
+    runScan(c.toDataURL('image/jpeg', 0.9).split(',')[1]);
+  };
+  img.src = URL.createObjectURL(file);
+};
+
+// ---------- Распознавание ----------
+async function runScan(b64) {
+  saveBtn.style.display = 'none';
+  form.textContent = 'Распознаю...';
+  try {
+    const r = await post({ action: 'scan', image: b64, mime: 'image/jpeg' });
+    if (!r.ok) throw new Error(r.error);
+    const d = current = r.data;
+    const warn = d._valid ? '' :
+      '<b style="color:red">№ рецепта или код защиты распознан неточно — проверьте или переснимите</b>';
+    form.innerHTML = warn + Object.entries(d).filter(([k]) => k[0] !== '_').map(([k, val]) =>
+      `<label>${k}<input data-k="${k}" value="${val == null ? '' : String(val).replace(/"/g, '&quot;')}"></label>`
+    ).join('');
+    saveBtn.style.display = '';
+  } catch (e) { form.textContent = 'Ошибка: ' + e.message; }
+}
+
+// ---------- Сохранение ----------
+saveBtn.onclick = async () => {
+  form.querySelectorAll('input').forEach(i => current[i.dataset.k] = i.value);
+  const uid = tg?.initDataUnsafe?.user?.id || '';
+  try {
+    const r = await post({ action: 'save', data: current, user: uid });
+    alert(r.ok ? 'Сохранено ✅' : r.error);
+    if (r.ok) { form.innerHTML = ''; saveBtn.style.display = 'none'; }
+  } catch (e) { alert('Ошибка: ' + e.message); }
+};
+</script>
+</body>
+</html>
