@@ -7,13 +7,13 @@
 <title>Скан рецепта</title>
 <style>
   body { font-family: sans-serif; padding: 12px; }
-  label { display: block; font-size: 12px; color: #666; margin-top: 8px; }
-  input:not([type=file]):not([type=range]) { width: 100%; padding: 8px; box-sizing: border-box; }
-  textarea { width: 100%; padding: 8px; box-sizing: border-box; font: inherit; resize: none; overflow: hidden; }
   button { width: 100%; padding: 12px; margin-top: 10px; font-size: 16px; }
   #saveBtn { position: sticky; bottom: 10px; z-index: 5; background: #2ecc71; color: #fff;
              font-weight: bold; border: 0; border-radius: 8px; }
   #net { font-size: 12px; color: #888; margin-top: 16px; word-break: break-word; }
+  .row { padding: 10px 0; border-bottom: 1px solid #eee; }
+  .row span { display: block; font-size: 12px; color: #888; }
+  .row b { display: block; font-size: 16px; font-weight: 600; margin-top: 2px; word-break: break-word; }
 
   #cam { display: none; position: fixed; left: 0; top: 0; width: 100%; background: #000; z-index: 10; overflow: hidden; }
   #v { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
@@ -78,14 +78,16 @@ const post = o => fetch(URL_GAS, { method: 'POST', body: JSON.stringify(o) }).th
 const errText = e => (e && e.message === 'Failed to fetch')
   ? 'Нет связи с Apps Script (см. строку «Связь» внизу страницы)' : (e && e.message) || String(e);
 
-const LABELS = {
-  retsept_no: 'Рецепт №', himoya_kodi: 'Код защиты', chiqarilgan_sana: 'Дата выдачи',
-  shifokor: 'Врач', muassasa: 'Учреждение', shifokor_tel: 'Тел. врача',
-  xpn: 'МНН', savdo_nomi: 'Торговое название', miqdori: 'Количество', summa: 'Сумма',
-  dorixona: 'Аптека', bemor: 'Пациент', bemor_yoshi: 'Возраст', bemor_tel: 'Тел. пациента'
-};
+// Что видит клиент (только чтение). Остальные поля сохраняются в таблицу, но не показываются.
+const SHOW = [
+  ['retsept_no',       'Рецепт №'],
+  ['chiqarilgan_sana', 'Дата'],
+  ['shifokor',         'Врач'],
+  ['savdo_nomi',       'Торговое название'],
+  ['miqdori',          'Кол-во'],
+  ['dorixona',         'Аптека']
+];
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-const grow = t => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; };
 
 // ---------- Проверка связи ----------
 async function ping() {
@@ -221,27 +223,32 @@ async function runScan(b64) {
     if (!r.ok) throw new Error(r.error);
     const d = current = r.data;
     const sec = ((Date.now() - t0) / 1000).toFixed(1);
-    const warn = d._valid ? '' :
-      '<div style="color:red;font-weight:bold;margin-top:8px">№ рецепта или код защиты распознан неточно — проверьте или переснимите</div>';
-    form.innerHTML =
-      '<div style="color:#888;font-size:12px;margin-top:8px">Готово за ' + sec + ' с. Проверьте поля, при необходимости исправьте и нажмите «Сохранить».</div>' + warn +
-      Object.entries(d).filter(([k]) => k[0] !== '_').map(([k, val]) =>
-        '<label>' + (LABELS[k] || k) + '<textarea data-k="' + k + '" rows="1">' + esc(val) + '</textarea></label>'
-      ).join('');
-    form.querySelectorAll('textarea').forEach(t => { grow(t); t.oninput = () => grow(t); });
-    saveBtn.style.display = '';
+
+    const rows = SHOW.map(([k, label]) =>
+      '<div class="row"><span>' + label + '</span><b>' + (esc(d[k]) || '—') + '</b></div>').join('');
+
+    let head = '<div style="color:#888;font-size:12px;margin-top:8px">Готово за ' + sec + ' с.</div>';
+    if (d._valid) {
+      saveBtn.style.display = '';
+    } else {
+      head += '<div style="color:red;font-weight:bold;margin-top:8px">Рецепт не удалось прочитать точно. ' +
+              'Переснимите: рецепт целиком в рамке, без бликов и наклона.</div>';
+    }
+    form.innerHTML = head + rows;
   } catch (e) { form.textContent = 'Ошибка: ' + errText(e); }
 }
 
-// ---------- Сохранение ----------
+// ---------- Сохранение (все поля, включая скрытые) ----------
 saveBtn.onclick = async () => {
-  form.querySelectorAll('[data-k]').forEach(i => current[i.dataset.k] = i.value);
+  if (!current) return;
+  saveBtn.disabled = true;
   const uid = tg?.initDataUnsafe?.user?.id || '';
   try {
     const r = await post({ action: 'save', data: current, user: uid });
     alert(r.ok ? 'Сохранено ✅' : r.error);
-    if (r.ok) { form.innerHTML = ''; saveBtn.style.display = 'none'; }
+    if (r.ok) { form.innerHTML = ''; saveBtn.style.display = 'none'; current = null; }
   } catch (e) { alert('Ошибка: ' + errText(e)); }
+  saveBtn.disabled = false;
 };
 </script>
 </body>
