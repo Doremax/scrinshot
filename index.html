@@ -68,7 +68,7 @@
 </div>
 
 <script>
-const URL_GAS = 'https://script.google.com/macros/s/AKfycbyxERXrpcMx5jndpSFG2X7dMzmCDsibpAiTjUW4XL1hsW3ncpLN678RC4tgB9akHZsw2g/exec';
+const URL_GAS = 'https://script.google.com/macros/s/AKfycbx4JkA6sl6uf4OqVktT-jk6TjSix0qDEvIP44ryxuhaly59mZsZYAt-hjA8wNfKqD9j/exec';
 const RW = 1870, RH = 888, MAX_W = 2200;
 const tg = window.Telegram && Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
@@ -227,7 +227,7 @@ async function runScan(b64) {
     const rows = SHOW.map(([k, label]) =>
       '<div class="row"><span>' + label + '</span><b>' + (esc(d[k]) || '—') + '</b></div>').join('');
 
-    let head = '<div style="color:#888;font-size:12px;margin-top:8px">Готово за ' + sec + ' с.</div>';
+    let head = '<div style="color:#888;font-size:12px;margin-top:8px">Готово за ' + sec + ' с (' + (d._src || '') + ')</div>';
     if (d._valid) {
       saveBtn.style.display = '';
     } else {
