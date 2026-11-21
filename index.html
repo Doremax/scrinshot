@@ -9,7 +9,10 @@
   body { font-family: sans-serif; padding: 12px; }
   label { display: block; font-size: 12px; color: #666; margin-top: 8px; }
   input:not([type=file]):not([type=range]) { width: 100%; padding: 8px; box-sizing: border-box; }
+  textarea { width: 100%; padding: 8px; box-sizing: border-box; font: inherit; resize: none; overflow: hidden; }
   button { width: 100%; padding: 12px; margin-top: 10px; font-size: 16px; }
+  #saveBtn { position: sticky; bottom: 10px; z-index: 5; background: #2ecc71; color: #fff;
+             font-weight: bold; border: 0; border-radius: 8px; }
   #net { font-size: 12px; color: #888; margin-top: 16px; word-break: break-word; }
 
   #cam { display: none; position: fixed; left: 0; top: 0; width: 100%; background: #000; z-index: 10; overflow: hidden; }
@@ -65,7 +68,7 @@
 </div>
 
 <script>
-const URL_GAS = 'https://script.google.com/macros/s/AKfycbwDA19Pd8lAtt05mkS6ZqUjXQzx9G0O_ZSrSfxAYw4WmYn2ND1ddZmtJlMQJuhmWyCuvA/exec';
+const URL_GAS = 'https://script.google.com/macros/s/AKfycbwhllhz8AjtCiYwDtAX9RxHolapVmS0oXmYFpLNXVrXCgtBHrV7tT0MWoeKQvfALL9Wig/exec';
 const RW = 1870, RH = 888, MAX_W = 2200;
 const tg = window.Telegram && Telegram.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
@@ -74,6 +77,15 @@ let current = null, stream = null;
 const post = o => fetch(URL_GAS, { method: 'POST', body: JSON.stringify(o) }).then(r => r.json());
 const errText = e => (e && e.message === 'Failed to fetch')
   ? 'Нет связи с Apps Script (см. строку «Связь» внизу страницы)' : (e && e.message) || String(e);
+
+const LABELS = {
+  retsept_no: 'Рецепт №', himoya_kodi: 'Код защиты', chiqarilgan_sana: 'Дата выдачи',
+  shifokor: 'Врач', muassasa: 'Учреждение', shifokor_tel: 'Тел. врача',
+  xpn: 'МНН', savdo_nomi: 'Торговое название', miqdori: 'Количество', summa: 'Сумма',
+  dorixona: 'Аптека', bemor: 'Пациент', bemor_yoshi: 'Возраст', bemor_tel: 'Тел. пациента'
+};
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+const grow = t => { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; };
 
 // ---------- Проверка связи ----------
 async function ping() {
@@ -86,7 +98,7 @@ async function ping() {
   } catch (e) {
     try {
       await fetch(URL_GAS, { mode: 'no-cors' });
-      net.textContent = '❌ Адрес отвечает, но чтение запрещено: у развертывания не «Anyone» или ссылка не от веб-приложения /exec (…' + id + ')';
+      net.textContent = '❌ Адрес отвечает, но чтение запрещено: у развертывания не «Все» или ссылка не от веб-приложения /exec (…' + id + ')';
     } catch (e2) {
       net.textContent = '❌ Нет соединения с этим адресом: проверьте ссылку и интернет (…' + id + ')';
     }
@@ -203,22 +215,27 @@ f.onchange = () => {
 async function runScan(b64) {
   saveBtn.style.display = 'none';
   form.textContent = 'Распознаю...';
+  const t0 = Date.now();
   try {
     const r = await post({ action: 'scan', image: b64, mime: 'image/jpeg' });
     if (!r.ok) throw new Error(r.error);
     const d = current = r.data;
+    const sec = ((Date.now() - t0) / 1000).toFixed(1);
     const warn = d._valid ? '' :
-      '<b style="color:red">№ рецепта или код защиты распознан неточно — проверьте или переснимите</b>';
-    form.innerHTML = warn + Object.entries(d).filter(([k]) => k[0] !== '_').map(([k, val]) =>
-      `<label>${k}<input data-k="${k}" value="${val == null ? '' : String(val).replace(/"/g, '&quot;')}"></label>`
-    ).join('');
+      '<div style="color:red;font-weight:bold;margin-top:8px">№ рецепта или код защиты распознан неточно — проверьте или переснимите</div>';
+    form.innerHTML =
+      '<div style="color:#888;font-size:12px;margin-top:8px">Готово за ' + sec + ' с. Проверьте поля, при необходимости исправьте и нажмите «Сохранить».</div>' + warn +
+      Object.entries(d).filter(([k]) => k[0] !== '_').map(([k, val]) =>
+        '<label>' + (LABELS[k] || k) + '<textarea data-k="' + k + '" rows="1">' + esc(val) + '</textarea></label>'
+      ).join('');
+    form.querySelectorAll('textarea').forEach(t => { grow(t); t.oninput = () => grow(t); });
     saveBtn.style.display = '';
   } catch (e) { form.textContent = 'Ошибка: ' + errText(e); }
 }
 
 // ---------- Сохранение ----------
 saveBtn.onclick = async () => {
-  form.querySelectorAll('input').forEach(i => current[i.dataset.k] = i.value);
+  form.querySelectorAll('[data-k]').forEach(i => current[i.dataset.k] = i.value);
   const uid = tg?.initDataUnsafe?.user?.id || '';
   try {
     const r = await post({ action: 'save', data: current, user: uid });
