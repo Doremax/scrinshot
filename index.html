@@ -8,25 +8,37 @@
 <style>
   body { font-family: sans-serif; padding: 12px; }
   label { display: block; font-size: 12px; color: #666; margin-top: 8px; }
-  input:not([type=file]) { width: 100%; padding: 8px; box-sizing: border-box; }
+  input:not([type=file]):not([type=range]) { width: 100%; padding: 8px; box-sizing: border-box; }
   button { width: 100%; padding: 12px; margin-top: 10px; font-size: 16px; }
+  #net { font-size: 12px; color: #888; margin-top: 16px; word-break: break-word; }
 
-  #cam { display: none; position: fixed; left: 0; top: 0; width: 100%; height: 100dvh;
-         background: #000; z-index: 10; overflow: hidden; }
+  #cam { display: none; position: fixed; left: 0; top: 0; width: 100%; background: #000; z-index: 10; overflow: hidden; }
   #v { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
-  #frame { position: absolute; left: 4vw; width: 92vw; aspect-ratio: 1870 / 888;
-           top: 50%; transform: translateY(-50%); border: 3px solid #2ecc71;
-           box-sizing: border-box; box-shadow: 0 0 0 100vmax rgba(0,0,0,.55); pointer-events: none; }
-  #hint { position: absolute; top: 10px; left: 0; right: 0; text-align: center;
-          color: #fff; font-size: 14px; padding: 0 16px; pointer-events: none; }
-  #info { position: absolute; top: 62px; left: 0; right: 0; text-align: center;
-          color: #ff0; font-size: 12px; pointer-events: none; }
+  #frame { position: absolute; border: 3px solid #2ecc71; box-sizing: border-box;
+           box-shadow: 0 0 0 100vmax rgba(0,0,0,.55); pointer-events: none; }
+  #hint { position: absolute; top: 8px; left: 0; right: 0; text-align: center; color: #fff;
+          font-size: 14px; padding: 0 12px; pointer-events: none; }
+  #info { position: absolute; top: 58px; left: 0; right: 0; text-align: center; color: #ff0;
+          font-size: 12px; pointer-events: none; }
+  #zoomWrap { display: none; position: absolute; left: 24px; right: 24px;
+              bottom: calc(env(safe-area-inset-bottom, 0px) + 130px); color: #fff; font-size: 13px; text-align: center; }
+  #zoom { width: 100%; }
   #camBtns { position: absolute; left: 12px; right: 12px; display: flex; gap: 10px; align-items: center;
-             bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); }
+             bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); }
   #camBtns button { margin: 0; padding: 12px 6px; font-size: 15px; }
   #shotBtn { width: 78px; height: 78px; flex: 0 0 78px; border-radius: 50%; border: 5px solid #fff;
              background: #2ecc71; padding: 0; font-size: 0; }
   #closeBtn, #fullBtn { flex: 1; }
+
+  /* горизонтальный режим: кнопки справа */
+  #cam.land #hint { right: 150px; font-size: 13px; }
+  #cam.land #info { right: 150px; top: 46px; }
+  #cam.land #camBtns { left: auto; right: 10px; top: 50%; bottom: auto; transform: translateY(-50%);
+                       width: 130px; flex-direction: column; }
+  #cam.land #camBtns button { width: 100%; }
+  #cam.land #closeBtn, #cam.land #fullBtn { flex: none; }
+  #cam.land #shotBtn { width: 78px; flex: none; }
+  #cam.land #zoomWrap { left: 20px; right: 170px; bottom: 10px; }
 </style>
 </head>
 <body>
@@ -37,12 +49,14 @@
 
 <div id="form"></div>
 <button id="saveBtn" style="display:none">Сохранить</button>
+<div id="net"></div>
 
 <div id="cam">
   <video id="v" autoplay playsinline muted></video>
   <div id="frame"></div>
   <div id="hint">Вместите экран с рецептом в зелёную рамку.<br>Можно снимать вертикально или горизонтально.</div>
   <div id="info"></div>
+  <div id="zoomWrap">Зум <input type="range" id="zoom"></div>
   <div id="camBtns">
     <button id="closeBtn">Отмена</button>
     <button id="shotBtn" aria-label="Снять">●</button>
@@ -58,11 +72,43 @@ if (tg) { tg.ready(); tg.expand(); }
 let current = null, stream = null;
 
 const post = o => fetch(URL_GAS, { method: 'POST', body: JSON.stringify(o) }).then(r => r.json());
+const errText = e => (e && e.message === 'Failed to fetch')
+  ? 'Нет связи с Apps Script (см. строку «Связь» внизу страницы)' : (e && e.message) || String(e);
 
-// ---------- Камера ----------
-function fit() { cam.style.height = window.innerHeight + 'px'; }
+// ---------- Проверка связи ----------
+async function ping() {
+  const id = (URL_GAS.split('/s/')[1] || '').slice(-12, -5) || '??';
+  net.textContent = 'Связь с Apps Script: проверяю... (…' + id + ')';
+  try {
+    const r = await fetch(URL_GAS);
+    const t = (await r.text()).slice(0, 40);
+    net.textContent = 'Связь с Apps Script: ✅ «' + t + '» (…' + id + ')';
+  } catch (e) {
+    try {
+      await fetch(URL_GAS, { mode: 'no-cors' });
+      net.textContent = '❌ Адрес отвечает, но чтение запрещено: у развертывания не «Anyone» или ссылка не от веб-приложения /exec (…' + id + ')';
+    } catch (e2) {
+      net.textContent = '❌ Нет соединения с этим адресом: проверьте ссылку и интернет (…' + id + ')';
+    }
+  }
+}
+ping();
+
+// ---------- Раскладка камеры ----------
+function fit() {
+  const W = window.innerWidth, H = window.innerHeight, land = W > H;
+  cam.style.height = H + 'px';
+  cam.classList.toggle('land', land);
+  const availW = land ? W - 150 : W * 0.94;
+  const availH = land ? H - 70 : H - 330;
+  const fw = Math.min(availW, availH * RW / RH), fh = fw * RH / RW;
+  frame.style.width = fw + 'px'; frame.style.height = fh + 'px';
+  frame.style.left = (land ? (W - 150 - fw) / 2 + 6 : (W - fw) / 2) + 'px';
+  frame.style.top = (land ? (H - fh) / 2 : (H - fh) / 2 - 20) + 'px';
+}
 window.addEventListener('resize', fit);
 
+// ---------- Камера ----------
 async function getStream() {
   const tries = [
     { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
@@ -82,18 +128,29 @@ camBtn.onclick = async () => {
   info.textContent = 'Запуск камеры...';
   try {
     stream = await getStream();
-    v.srcObject = stream;
-    v.muted = true;
-    await v.play();
+    v.srcObject = stream; v.muted = true; await v.play();
   } catch (e) {
     closeCam();
     alert('Камера недоступна: ' + e.name + '. Разрешите доступ к камере для Telegram или выберите фото из галереи.');
     return;
   }
+  // зум и автофокус, если камера умеет
+  zoomWrap.style.display = 'none';
+  try {
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.focusMode && caps.focusMode.includes('continuous'))
+      track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    if (caps.zoom) {
+      zoom.min = caps.zoom.min; zoom.max = caps.zoom.max; zoom.step = caps.zoom.step || 0.1;
+      zoom.value = caps.zoom.min; zoomWrap.style.display = 'block';
+      zoom.oninput = () => track.applyConstraints({ advanced: [{ zoom: +zoom.value }] }).catch(() => {});
+    }
+  } catch (e) {}
   const upd = () => { info.textContent = v.videoWidth ? ('Камера: ' + v.videoWidth + '×' + v.videoHeight) : ''; };
-  v.onloadedmetadata = upd; upd();
+  v.onloadedmetadata = upd; v.onresize = upd; upd();
   setTimeout(() => {
-    if (stream && !v.videoWidth) info.textContent = 'Нет изображения с камеры. Закройте другие приложения, которые используют камеру.';
+    if (stream && !v.videoWidth) info.textContent = 'Нет изображения с камеры. Закройте другие приложения, использующие камеру.';
     else upd();
   }, 1500);
 };
@@ -107,8 +164,7 @@ closeBtn.onclick = closeCam;
 function capture(useFrame) {
   const vW = v.videoWidth, vH = v.videoHeight;
   if (!vW) { alert('Камера ещё не готова. Подождите секунду.'); return; }
-  let sx = 0, sy = 0, sw = vW, sh = vH, ow, oh;
-
+  let sx = 0, sy = 0, sw = vW, sh = vH;
   if (useFrame) {
     const vb = v.getBoundingClientRect(), fr = frame.getBoundingClientRect();
     const scale = Math.max(vb.width / vW, vb.height / vH);          // object-fit: cover
@@ -118,13 +174,11 @@ function capture(useFrame) {
     sw = Math.min(vW - sx, fr.width / scale);
     sh = Math.min(vH - sy, fr.height / scale);
   }
-  ow = Math.min(Math.round(sw), MAX_W);
-  oh = Math.round(ow * sh / sw);
-
+  const ow = Math.min(Math.round(sw), MAX_W), oh = Math.round(ow * sh / sw);
   const c = document.createElement('canvas'); c.width = ow; c.height = oh;
   c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, ow, oh);
   closeCam();
-  runScan(c.toDataURL('image/jpeg', 0.9).split(',')[1]);
+  runScan(c.toDataURL('image/jpeg', 0.92).split(',')[1]);
 }
 shotBtn.onclick = () => capture(true);
 fullBtn.onclick = () => capture(false);
@@ -140,7 +194,7 @@ f.onchange = () => {
     c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     f.value = '';
-    runScan(c.toDataURL('image/jpeg', 0.9).split(',')[1]);
+    runScan(c.toDataURL('image/jpeg', 0.92).split(',')[1]);
   };
   img.src = URL.createObjectURL(file);
 };
@@ -159,7 +213,7 @@ async function runScan(b64) {
       `<label>${k}<input data-k="${k}" value="${val == null ? '' : String(val).replace(/"/g, '&quot;')}"></label>`
     ).join('');
     saveBtn.style.display = '';
-  } catch (e) { form.textContent = 'Ошибка: ' + e.message; }
+  } catch (e) { form.textContent = 'Ошибка: ' + errText(e); }
 }
 
 // ---------- Сохранение ----------
@@ -170,7 +224,7 @@ saveBtn.onclick = async () => {
     const r = await post({ action: 'save', data: current, user: uid });
     alert(r.ok ? 'Сохранено ✅' : r.error);
     if (r.ok) { form.innerHTML = ''; saveBtn.style.display = 'none'; }
-  } catch (e) { alert('Ошибка: ' + e.message); }
+  } catch (e) { alert('Ошибка: ' + errText(e)); }
 };
 </script>
 </body>
